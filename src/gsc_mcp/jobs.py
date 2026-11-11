@@ -257,7 +257,10 @@ def start(urls: list[str], cfg: dict) -> str:
         # Inside the lock on purpose, so a refused start leaves no row: an
         # orphan row would surface in gsc_job_status as a job that never ran.
         with store.session() as conn:
-            store.create_job(conn, job_id, {"urls": urls, "total": len(urls)})
+            progress = {"urls": urls, "total": len(urls)}
+            if cfg.get("reindex") is True:
+                progress["reindex"] = True
+            store.create_job(conn, job_id, progress)
 
         stop_event = threading.Event()
         thread = threading.Thread(target=_worker,
@@ -359,6 +362,8 @@ def _worker(job_id: str, urls: list[str], cfg: dict,
             stop_event: threading.Event) -> None:
     conn: sqlite3.Connection | None = None
     progress: dict = {"done": 0, "total": len(urls), "results": []}
+    if cfg.get("reindex") is True:
+        progress["reindex"] = True
     try:
         # Its OWN connection: store.tx()'s re-entrancy is connection-scoped,
         # so sharing the caller's would let two threads nest transactions

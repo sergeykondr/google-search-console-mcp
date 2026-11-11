@@ -4,6 +4,23 @@ Notable changes to `gsc-mcp`. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [PEP 440](https://peps.python.org/pep-0440/).
 
+## [Unreleased]
+
+### Added
+
+- Optional per-call `reindex` mode for both submission tools, to request a
+  recrawl of changed pages already indexed by Google. Existing calls still
+  skip indexed pages. Quota, pacing and account checks remain in force.
+- Extension capability checks reject an outdated worker before dispatching
+  reindex requests and check existing tabs for stale content scripts.
+- Reindex commands are not replayed after an uncertain send or connection
+  loss; the caller receives a conservative timeout instead of a duplicate.
+
+### Verification
+
+- Regression tests exercise the shipped content script with local Chrome/UI
+  fakes. Live submission of an already indexed page has not yet been tested.
+
 ## [0.1.0] — 2026-08-08
 
 First release without a pre-release suffix. Nothing in the code changed from

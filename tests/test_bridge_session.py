@@ -63,6 +63,26 @@ def _hello(sess) -> object:
     return conn
 
 
+def test_reindex_capability_survives_the_real_hello_and_submit(session):
+    with ws_connect(f"ws://127.0.0.1:{session.port}") as conn:
+        conn.send(json.dumps({"type": "hello", "token": TOKEN,
+                              "capabilities": ["reindex"]}))
+        assert json.loads(conn.recv())["type"] == "hello_ok"
+        commands = []
+
+        def reply(command):
+            commands.append(command)
+            return {"type": "result", "id": command["id"], "outcome": "submitted"}
+
+        thread = _responder(conn, reply)
+        result = session.submit("sc-domain:example.com", "https://example.com/a",
+                                "0", reindex=True, timeout=5)
+        thread.join(SETTLE)
+        assert result == "submitted"
+        assert len(commands) == 1
+        assert commands[0]["reindex"] is True
+
+
 def _responder(conn, reply=None) -> threading.Thread:
     """Stand in for a live extension, in a thread the caller joins.
 

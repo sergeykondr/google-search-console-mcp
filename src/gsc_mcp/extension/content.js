@@ -370,7 +370,7 @@ async function rpcHarvest() {
   return rpcUp("harvested", 5000);
 }
 
-async function runJob(id, url, authuser) {
+async function runJob(id, url, authuser, reindex = false) {
   try {
     if (aborted) return finish(id, "skipped");
     if (accountMismatch(authuser)) return finish(id, "account_mismatch");
@@ -397,13 +397,14 @@ async function runJob(id, url, authuser) {
       return finish(id, "error", "inspection failed");
     }
 
-    // already indexed -> skip without submitting. Only the verdict variant
+    // Indexed pages are skipped unless this job explicitly requests reindex.
+    // In the default mode, only the verdict variant
     // "URL is on Google, but has issues" justifies a (re)submit — benign
     // mentions like "Non-critical issues detected" in the Enhancements
     // section must NOT block the skip (live bug: indexed pages were
     // re-submitted and burned slots).
     const t = pageText();
-    if (t.includes("url is on google") && !t.includes("but has issues"))
+    if (reindex !== true && t.includes("url is on google") && !t.includes("but has issues"))
       return finish(id, "already_indexed");
 
     // PROBE: inspect, record, and stop before the click. Costs no quota — only
@@ -502,10 +503,14 @@ async function runJob(id, url, authuser) {
 }
 
 chrome.runtime.onMessage.addListener((m, _sender, sendResponse) => {
+  if (m.type === "capabilities") {
+    sendResponse({ reindex: true });
+    return false;
+  }
   if (m.type === "job") {
     aborted = false;                    // fresh job — clear any prior abort
     sendResponse({ accepted: true });   // ack immediately; result comes async
-    runJob(m.id, m.url, m.authuser);
+    runJob(m.id, m.url, m.authuser, m.reindex === true);
   }
   if (m.type === "abort") { aborted = true; }   // popup "Stop" — bail out of waits
   return false;

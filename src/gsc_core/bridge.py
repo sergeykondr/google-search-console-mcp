@@ -76,6 +76,7 @@ KNOWN_OUTCOMES = frozenset({
     "submitted", "already_indexed", "quota_exceeded", "timeout",
     "captcha", "captcha_after_click", "auth_required",
     "account_mismatch", "rate_limited", "skipped", "error",
+    "reindex_unsupported",
 })
 
 
@@ -190,9 +191,13 @@ def load_or_create_token() -> str:
     return token
 
 
-def make_submit(cmd_id: str, gsc_property: str, url: str, authuser: str) -> str:
-    return json.dumps({"type": "submit", "id": cmd_id, "property": gsc_property,
-                       "url": url, "authuser": authuser})
+def make_submit(cmd_id: str, gsc_property: str, url: str, authuser: str, *,
+                reindex: bool = False) -> str:
+    frame = {"type": "submit", "id": cmd_id, "property": gsc_property,
+             "url": url, "authuser": authuser}
+    if reindex:
+        frame["reindex"] = True
+    return json.dumps(frame)
 
 
 def parse_message(raw: object) -> dict | None:
@@ -238,6 +243,7 @@ class BridgeSession:
         self.bind_error: str | None = None
         self._server: object | None = None
         self._conn: object | None = None
+        self._capabilities: frozenset[str] = frozenset()
         self._conn_lock = threading.Lock()
         # Waited on by submit() and notified by the handler on every
         # (re)connection, so a resend wakes the instant a socket is live
@@ -395,7 +401,7 @@ class BridgeSession:
 
     def submit(self, gsc_property: str, url: str, authuser: str, *,
                timeout: int = 1500, reconnect_grace: float = 120,
-               max_resends: int = 3) -> str:
+               max_resends: int = 3, reindex: bool = False) -> str:
         """Send one submit command; block until the extension reports the
         outcome or `timeout` seconds pass.
 
@@ -478,12 +484,24 @@ class BridgeSession:
                     log.warning("bridge: no extension connection within %ss "
                                 "— giving up on this URL", reconnect_grace)
                     return "error"
+                if reindex:
+                    with self._conn_lock:
+                        if self._conn is not conn:
+                            continue
+                        if "reindex" not in self._capabilities:
+                            log.warning("bridge: reload the updated extension to use reindex")
+                            return "reindex_unsupported"
                 try:
-                    conn.send(make_submit(cmd_id, gsc_property, url, authuser))
+                    conn.send(make_submit(cmd_id, gsc_property, url, authuser,
+                                          reindex=reindex))
                     sent = True
                 except Exception as exc:  # noqa: BLE001 — a drop, not a bug
                     log.warning("bridge: send failed (%s); awaiting reconnect",
                                 type(exc).__name__)
+                    if reindex:
+                        # The indexed-page skip no longer protects this URL
+                        # against a duplicate click. A partial send is unknown.
+                        return "timeout"
                     if resends >= max_resends:
                         return "error"
                     resends += 1
@@ -497,6 +515,10 @@ class BridgeSession:
                     if time.monotonic() >= deadline:
                         return self._expired(timeout, sent)
                     if self._connection_bounced(conn, gen):
+                        if reindex:
+                            # It may already have clicked. Do not re-submit an
+                            # updated indexed page just because its reply died.
+                            return "timeout"
                         # The connection this command was sent on is gone, so
                         # the in-page job died with the old worker; re-send
                         # once a fresh connection is live.
@@ -635,7 +657,7 @@ class BridgeSession:
             log.warning("bridge: rejected a connection (bad or missing token)")
             return
 
-        if not self._claim(conn):
+        if not self._claim(conn, capabilities=hello.get("capabilities")):
             self._refuse_busy(conn, "another browser holds this run")
             log.debug("bridge: %s refused — %s holds the run", tag,
                       self._tag(self._conn) if self._conn is not None
@@ -728,7 +750,7 @@ class BridgeSession:
             time.sleep(0.02)
         return self._frames_seen != before
 
-    def _claim(self, conn: object) -> bool:
+    def _claim(self, conn: object, *, capabilities: object = None) -> bool:
         """Make `conn` the live connection, or refuse it. One owner at a time.
 
         The rule is first-come: a connection that is already live is never
@@ -788,6 +810,9 @@ class BridgeSession:
             if self._stopped:
                 return False
             self._conn = conn
+            self._capabilities = frozenset(
+                value for value in capabilities if isinstance(value, str)
+            ) if isinstance(capabilities, list) else frozenset()
             self._gen += 1
             self._last_seen = time.monotonic()
             # Inside the lock, with the _conn publication it belongs to.
@@ -804,6 +829,7 @@ class BridgeSession:
         with self._conn_cv:
             if self._conn is conn:
                 self._conn = None
+                self._capabilities = frozenset()
                 # Only clear the ready-signal while this connection is
                 # still the active one. A reconnecting extension may
                 # already have set it for the NEW connection; clearing

@@ -126,6 +126,9 @@ def _notes_for(outcomes: set[str | None]) -> list[str]:
         notes.append(_NOTE_NO_PROPERTY)
     if "no_quota" in outcomes:
         notes.append(_NOTE_NO_QUOTA)
+    if "reindex_unsupported" in outcomes:
+        notes.append("reload the updated GSC MCP Bridge extension and refresh "
+                     "its Search Console tab before requesting reindex")
     return notes
 
 
@@ -159,10 +162,13 @@ def _tally(result: submit.RunResult) -> dict:
     }
 
 
-def request_indexing(urls: list[str]) -> dict:
+def request_indexing(urls: list[str], reindex: bool = False) -> dict:
     """Submit up to five URLs, blocking until every one has an outcome."""
     try:
-        return _request_indexing(urls)
+        if not isinstance(reindex, bool):
+            return envelopes.refuse("bad_reindex", "reindex must be a boolean",
+                                    "pass true only for changed indexed pages")
+        return _request_indexing(urls, reindex)
     except jobs.AlreadyRunning as exc:
         # Repeated for the same reason start_indexing_job repeats it: the
         # message is authored in jobs.py, it names a job id at most, and
@@ -178,8 +184,9 @@ def request_indexing(urls: list[str]) -> dict:
                                 envelopes.FIX_UNEXPECTED)
 
 
-def _request_indexing(urls: list[str]) -> dict:
-    cfg = config.load()
+def _request_indexing(urls: list[str], reindex: bool = False) -> dict:
+    # Per-call intent, never a sticky preference read from config.json.
+    cfg = {**config.load(), "reindex": reindex}
     cap = _cap(cfg)
     if cap is None:
         return envelopes.refuse("bad_config",
@@ -251,13 +258,16 @@ def _request_indexing(urls: list[str]) -> dict:
 # sitting on a stalled call for hours.
 
 
-def start_indexing_job(urls: list[str]) -> dict:
+def start_indexing_job(urls: list[str], reindex: bool = False) -> dict:
     """Queue a background submission run over any number of URLs.
 
     Returns as soon as the job row exists. No cap: the whole point of a job
     is that nobody is waiting on it.
     """
     try:
+        if not isinstance(reindex, bool):
+            return envelopes.refuse("bad_reindex", "reindex must be a boolean",
+                                    "pass true only for changed indexed pages")
         if not urls:
             return envelopes.refuse("no_urls", "no URLs were given",
                                     _FIX_NO_JOB_URLS)
@@ -272,7 +282,7 @@ def start_indexing_job(urls: list[str]) -> dict:
                                "no Search Console properties are known yet",
                                _FIX_NO_PROPERTIES)
 
-        job_id = jobs.start(urls, config.load())
+        job_id = jobs.start(urls, {**config.load(), "reindex": reindex})
         return {"ok": True, "job_id": job_id, "total": len(urls),
                 "note": _NOTE_JOB_QUEUED}
     except jobs.AlreadyRunning as exc:

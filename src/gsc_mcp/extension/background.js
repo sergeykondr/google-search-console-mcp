@@ -25,7 +25,7 @@ function pushRecent(url, outcome) {
 // is refused. Nothing here needs a human. The tool only listens while a run is
 // active, so most attempts fail by design — the point is to already be knocking
 // when one starts.
-const VERSION = "1.12.1";
+const VERSION = "1.13.0";
 const RETRY_MIN_MS = 1000;
 const RETRY_MAX_MS = 15000;
 let retryMs = RETRY_MIN_MS;
@@ -63,7 +63,8 @@ function connect() {
     ws = sock;
     sock.onopen = () => {
       connecting = false;
-      sock.send(JSON.stringify({ type: "hello", token, version: VERSION }));
+      sock.send(JSON.stringify({ type: "hello", token, version: VERSION,
+                                capabilities: ["reindex"] }));
     };
     sock.onmessage = (ev) => { try { onBridgeMessage(JSON.parse(ev.data)); } catch {} };
     sock.onclose = () => {
@@ -292,8 +293,15 @@ async function dispatchJob(tabId, cmd, attempts) {
   await ensureDebugger(tabId);
   for (let i = 0; i < attempts; i++) {
     try {
+      // An already open GSC tab may still carry the old content script.
+      // Check BEFORE dispatch: an old handler would ignore the new mode.
+      if (cmd.reindex === true) {
+        const caps = await chrome.tabs.sendMessage(tabId, { type: "capabilities" });
+        if (!caps || caps.reindex !== true) return false;
+      }
       const reply = await chrome.tabs.sendMessage(tabId, { type: "job",
-        id: cmd.id, url: cmd.url, authuser: cmd.authuser });
+        id: cmd.id, url: cmd.url, authuser: cmd.authuser,
+        reindex: cmd.reindex === true });
       if (reply) return true;
     } catch { await sleep(1000); }   // content script not ready yet
   }

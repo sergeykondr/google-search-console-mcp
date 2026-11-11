@@ -48,6 +48,7 @@ DISPOSITIONS: dict[str, Disposition] = {
     "captcha_after_click": Disposition(True,  True,  "captcha_after_click"),
     "timeout":             Disposition(True,  False, "timeout"),
     "already_indexed":     Disposition(False, False, "already_indexed"),
+    "reindex_unsupported": Disposition(False, True, "reindex_unsupported"),
     "quota_exceeded":      Disposition(False, True,  "quota_exceeded"),
     "rate_limited":        Disposition(False, True,  "rate_limited"),
     "auth_required":       Disposition(False, True,  "auth_required"),
@@ -191,7 +192,8 @@ class Sender(Protocol):
     detail it has no business knowing about.
     """
 
-    def submit(self, property: str, url: str, authuser: str) -> str: ...
+    def submit(self, property: str, url: str, authuser: str, *,
+               reindex: bool = False) -> str: ...
 
     #: The last stage reported for the submit that just returned, or None.
     #: Read only through _last_stage() below, which treats a sender that
@@ -286,7 +288,8 @@ def _failed_before_the_click(sender: Sender) -> bool:
     return getattr(sender, "last_stage", None) in _PRE_CLICK_STAGES
 
 
-def _submit_once(sender: Sender, property: str, url: str, authuser: str) -> str:
+def _submit_once(sender: Sender, property: str, url: str, authuser: str, *,
+                 reindex: bool = False) -> str:
     """One send. A raising sender becomes "error" so the row still settles.
 
     Leaving the submission row open would have quota.used() count it as
@@ -294,6 +297,8 @@ def _submit_once(sender: Sender, property: str, url: str, authuser: str) -> str:
     name only in the log: the exception text can carry the account.
     """
     try:
+        if reindex:
+            return sender.submit(property, url, authuser, reindex=True)
         return sender.submit(property, url, authuser)
     except Exception as exc:  # noqa: BLE001 — the row MUST still settle
         log.warning("submit failed for one URL (%s)", type(exc).__name__)
@@ -301,7 +306,8 @@ def _submit_once(sender: Sender, property: str, url: str, authuser: str) -> str:
 
 
 def _submit_with_retries(sender: Sender, property: str, url: str,
-                         authuser: str, *, retries: int) -> str:
+                         authuser: str, *, retries: int,
+                         reindex: bool = False) -> str:
     """Send one URL, re-sending only when the failure preceded the click.
 
     A transient browser-side failure used to drop the URL silently: the run
@@ -316,14 +322,14 @@ def _submit_with_retries(sender: Sender, property: str, url: str,
     spent no slot, and re-reserving mid-URL could refuse a slot the URL
     already holds.
     """
-    outcome = _submit_once(sender, property, url, authuser)
+    outcome = _submit_once(sender, property, url, authuser, reindex=reindex)
     for attempt in range(max(0, retries)):
         if outcome != "error" or not _failed_before_the_click(sender):
             return outcome
         log.info("a URL failed at the %s stage, before Request Indexing was "
                  "clicked — re-sending it (retry %d of %d)",
                  sender.last_stage, attempt + 1, retries)
-        outcome = _submit_once(sender, property, url, authuser)
+        outcome = _submit_once(sender, property, url, authuser, reindex=reindex)
     return outcome
 
 
@@ -395,7 +401,8 @@ def run(conn: sqlite3.Connection, sender: Sender, urls: list[str], *,
             continue
 
         outcome = _submit_with_retries(sender, target_property, url, authuser,
-                                       retries=submit_retries)
+                                       retries=submit_retries,
+                                       reindex=cfg.get("reindex") is True)
 
         disposition = settle(conn, reservation.submission_id, outcome,
                              stop_on_throttle=stop_on_throttle)

@@ -158,6 +158,39 @@ A URL whose state could not be established — a failed inspection, or a result 
 
 ## Submitting URLs
 
+### Updated pages that are already indexed
+
+Request Indexing is also Google's way to request a recrawl after a page
+changes. By default this server skips pages whose inspection verdict is
+"URL is on Google". For an explicit list of updated pages, opt in per call:
+
+```text
+gsc_request_indexing(urls=["https://example.com/updated"], reindex=true)
+gsc_start_indexing_job(urls=["https://example.com/updated"], reindex=true)
+```
+
+This clicks the same Request Indexing button. It does not bypass quotas,
+captcha or account checks, and a submitted request does not guarantee a
+crawl or an index update. Do not repeat requests for unchanged pages.
+The flag applies only to this call/job, not to future calls.
+
+Reload the updated extension before using this mode. An old extension is
+refused with `reindex_unsupported` before any URL is dispatched; a stale
+content script in an existing tab is checked before the job is delivered.
+After a connection loss once a reindex command may have been delivered,
+the result is conservatively `timeout` and the command is not replayed.
+Check the outcome before choosing to submit that page again.
+
+For authentication, prefer a dedicated Google account with **Full user**
+access to only the required property, in a dedicated browser profile. The
+browser session and the Search Console OAuth grant are separate credentials.
+The extension's `debugger` permission is powerful; do not use its profile
+for personal email or unrelated signed-in services. A browser profile is
+session separation, not an operating-system security sandbox.
+
+The JavaScript regression tests run the shipped content script locally
+using Node.js when available. They do not open Chrome or contact Google.
+
 Google has no API for Request Indexing that a tool like this can use, so submission goes through **your own browser**: the bridge extension, loaded into the profile you paired during `gsc_setup`, clicks Request Indexing in a real Search Console session. That has three consequences worth knowing before you spend anything.
 
 **It is slow, and the slowness is the feature.** Submissions are paced 130–180 seconds apart. That gap is not a placeholder and not a bug report — it is the interval proven not to draw a throttle over long runs. Five URLs is therefore up to fifteen minutes of wall clock, and the tool that does it blocks for all of it.

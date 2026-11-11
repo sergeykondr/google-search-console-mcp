@@ -56,9 +56,9 @@ def test_every_submission_tool_documents_itself(name: str) -> None:
 #: wrapper that quietly reorders or renames a parameter fails here.
 _DELEGATIONS = [
     ("gsc_request_indexing", "request_indexing",
-     (["https://example.com/a"],), {}, (["https://example.com/a"],), {}),
+     (["https://example.com/a"],), {}, (["https://example.com/a"],), {"reindex": False}),
     ("gsc_start_indexing_job", "start_indexing_job",
-     (["https://example.net/b"],), {}, (["https://example.net/b"],), {}),
+     (["https://example.net/b"],), {}, (["https://example.net/b"],), {"reindex": False}),
     ("gsc_job_status", "job_status", ("job-1",), {}, ("job-1",), {}),
     ("gsc_stop_job", "stop_job", ("job-1",), {}, ("job-1",), {}),
 ]
@@ -121,7 +121,7 @@ def test_no_wrapper_swallows_the_bodys_refusal(
     the `fix` string that tells it what to do instead."""
     refusal = {"ok": False, "error": "no_browser", "fix": "pair one"}
     monkeypatch.setattr(server.tools_submit, "request_indexing",
-                        lambda urls: refusal)
+                        lambda urls, reindex=False: refusal)
     assert registered()["gsc_request_indexing"]([]) is refusal
 
 

@@ -1019,9 +1019,13 @@ def gsc_setup(open_browser: bool = True) -> dict:
 
 
 @mcp.tool()
-def gsc_request_indexing(urls: list[str]) -> dict:
+def gsc_request_indexing(urls: list[str], reindex: bool = False) -> dict:
     """Submit up to five URLs to Google's Request Indexing, one at a time,
     through the browser extension in your own signed-in profile.
+
+    Set reindex=true for changed pages already in Google's index. The
+    default skips indexed pages. This uses the same Request Indexing
+    button and quota; it does not guarantee a crawl or index update.
 
     BLOCKING and slow by design: submissions are paced 130-180 seconds
     apart, so five URLs can take fifteen minutes. Use
@@ -1037,19 +1041,22 @@ def gsc_request_indexing(urls: list[str]) -> dict:
     signed-out session rather than burning the rest of the batch against a
     refusing server. A refusal is `{"ok": False, "error", "detail", "fix"}`.
     """
-    return tools_submit.request_indexing(urls)
+    return tools_submit.request_indexing(urls, reindex=reindex)
 
 
 @mcp.tool()
-def gsc_start_indexing_job(urls: list[str]) -> dict:
+def gsc_start_indexing_job(urls: list[str], reindex: bool = False) -> dict:
     """Queue a background submission run over any number of URLs.
+
+    Set reindex=true to include changed pages already indexed by Google.
+    The default skips those pages; all quota and stop rules still apply.
 
     Returns immediately with `{"ok", "job_id", "total", "note"}`. Poll
     gsc_job_status for progress and gsc_stop_job to end it early. One
     submission job runs at a time: the bridge drives a single browser tab
     in your real profile, so a second job is refused rather than queued.
     """
-    return tools_submit.start_indexing_job(urls)
+    return tools_submit.start_indexing_job(urls, reindex=reindex)
 
 
 @mcp.tool()
